@@ -20,15 +20,11 @@ def load_word_list(filepath):
     with open(filepath, encoding="utf-8") as f:
         return set(line.strip().lower() for line in f if line.strip())
 
-def has_prepositions_conjunctions(sentence, prepositions_set, conjunctions_set):
+def find_prepositions_conjunctions(sentence, prepositions_set, conjunctions_set):
     words = re.findall(r'\b\w+\b', sentence.lower())
-    
     found_prepositions = [w for w in words if w in prepositions_set]
     found_conjunctions = [w for w in words if w in conjunctions_set]
-    
-    has_any = bool(found_prepositions or found_conjunctions)
-    
-    return has_any, found_conjunctions, found_prepositions
+    return found_prepositions, found_conjunctions
 
 # ------------------------------------------------------------------------------------------
 def check_punctuation(sentence):
@@ -36,7 +32,6 @@ def check_punctuation(sentence):
         return False
     start_capital = sentence[0].isupper()
     end_punct = sentence.strip()[-1] in ".?!:;" or sentence.strip()[-1] in ['”', '"', "'"]
-    # Jika tanda kutip atau apostrof di akhir, cek karakter sebelumnya
     if not end_punct and sentence.strip()[-1] in ['”', '"', "'"]:
         stripped = sentence.strip().rstrip('”"\'')
         if stripped and stripped[-1] in ".?!:;":
@@ -56,39 +51,46 @@ def count_syllables_id(word):
             prev_char_vowel = False
     return max(count, 1)
 
-# --- fungsi hitung readability (Flesch Reading Ease modifikasi bahasa Indonesia) ---
+# --- fungsi hitung readability ---
 def flesch_reading_ease_id(sentence):
     words = re.findall(r'\b\w+\b', sentence)
     word_count = len(words)
     syllable_count = sum(count_syllables_id(w) for w in words)
-    sentence_count = 1  # karena input satu kalimat
+    sentence_count = 1
     if word_count == 0:
         return 0
     score = 206.835 - (65 * (syllable_count / word_count)) - (word_count / sentence_count)
     return round(score, 2)
 
-
-def calc_avg_word_freq(sentence, freq_set):
-    words = re.findall(r'\b\w+\b', sentence.lower())
-    found = [w for w in words if w in freq_set]
-    return len(found) / len(words) if words else 0
-
-def categorize_word_freq(avg_freq):
-    if avg_freq >= 0.8:
+def categorize_readability(score):
+    if score >= 60:
         return "mudah"
-    elif avg_freq >= 0.5:
+    elif score >= 30:
         return "sedang"
     else:
         return "sulit"
 
+# --- fitur tambahan ---
+def count_affixed_words(words):
+    prefixes = ("me", "di", "ke", "se", "ber", "ter", "per")
+    suffixes = ("kan", "an", "i")
+    affixed = [w for w in words if w.startswith(prefixes) or w.endswith(suffixes)]
+    return len(affixed)
 
+def count_reduplication(words):
+    return sum(1 for w in words if "-" in w or re.match(r'^(\w+)\1$', w))
+
+def calc_hard_word_ratio(words, freq_set):
+    if not words:
+        return 0
+    hard_count = sum(1 for w in words if w not in freq_set)
+    return hard_count / len(words)
 
 # ------------------------------------------------------------------------------------------
 # MAIN
 input_file = "ind_mixed-tufs4_2012_100K-sentences.txt"
 output_file = "hasil_readability.csv"
 
-# Load file daftar kata
 formal_words_set = load_formal_words("formal_words.txt")
 prepositions_set = load_word_list("prepositions.txt")
 conjunctions_set = load_word_list("conjunctions.txt")
@@ -101,18 +103,37 @@ with open(input_file, encoding="utf-8") as f:
             continue
         s_id, sentence = line.strip().split("\t", 1)
 
+        words = re.findall(r'\b\w+\b', sentence.lower())
+
         ragam = detect_ragam(sentence, formal_words_set)
-        has_prep_conj = has_prepositions_conjunctions(sentence, prepositions_set, conjunctions_set)
+        found_preps, found_conjs = find_prepositions_conjunctions(sentence, prepositions_set, conjunctions_set)
         punct_ok = check_punctuation(sentence)
         score = flesch_reading_ease_id(sentence)
+        readability_level = categorize_readability(score)
+
+        word_count = len(words)
+        unique_word_count = len(set(words))
+        avg_syllables_per_word = sum(count_syllables_id(w) for w in words) / word_count if word_count else 0
+        hard_word_ratio = calc_hard_word_ratio(words, freq_set)
+        affixed_word_ratio = count_affixed_words(words) / word_count if word_count else 0
+        reduplication_count = count_reduplication(words)
 
         rows.append({
             "s_id": s_id,
             "sentence": sentence,
             "ragam": ragam,
-            "punya_preposisi_konjungsi": has_prep_conj,
+            "prepositions": ", ".join(found_preps),
+            "conjunctions": ", ".join(found_conjs),
             "punctuation_ok": punct_ok,
-            "readability_score": score
+            "readability_score": score,
+            "readability_level": readability_level,
+            "word_count": word_count,
+            "unique_word_count": unique_word_count,
+            "avg_syllables_per_word": round(avg_syllables_per_word, 2),
+            "hard_word_ratio": round(hard_word_ratio, 3),
+            "affixed_word_ratio": round(affixed_word_ratio, 3),
+            "reduplication_count": reduplication_count,
+            "suggested_sentence": ""
         })
 
 # Simpan ke CSV
